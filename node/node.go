@@ -19,15 +19,16 @@ type RPCNode interface {
 type RPCNodeProxy interface {
 	Get(string) ([]byte, error)
 	Set(string, []byte) error
-	Relocate(string, []byte) error
+	relocate(string, []byte) error
 	Del(string) error
 	Ping() error
+	GetDims() uint, error
 	ID() uint64
 	IP() string
 	Port() int
 	Info() Node
 	FindNeighbor(*Node, uint64) (Node, error)
-	AssistBootstrap(string) (uint64, error)
+	assistBootstrap(string) (uint64, error)
 	GetNeighbors() ([]RPCNodeProxy, error)
 	Connect() error
 	Close() error

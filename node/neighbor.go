@@ -25,14 +25,20 @@ type Neighbor struct {
 
 //NewNeighbor initializes a remote proxy to a node given its attributes
 //Local Method
-func NewNeighbor(node *Node) (*Neighbor, error) {
-	conn, err := net.Dial("tcp", fmt.Sprintf("%v:%v", node.IP, node.Port))
+func NewNeighbor(addr string) (*Neighbor, error) {
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
 	proxy := rpc.NewClient(conn)
+
+	var node Node
+	err = proxy.Call("RPCNode.Info", struct{}{}, &node)
+	if err != nil {
+		return nil, err
+	}
 	return &Neighbor{
-		Node:  *node,
+		Node:  node,
 		proxy: proxy,
 		alive: true,
 	}, err
@@ -48,6 +54,11 @@ func (remote *Neighbor) Connect() error {
 	remote.proxy = rpc.NewClient(conn)
 	remote.alive = true
 	return nil
+}
+
+func (remote *Neighbor) GetDims() (dims uint, err error) {
+	err = remote.proxy.Call("RPCNode.Get", struct{}{}, &dims)
+	return dims, err
 }
 
 //Info returns the node attributes for the remote node represented by this proxy

@@ -12,6 +12,14 @@ import (
 	"github.com/rhino1998/util"
 )
 
+/*For future reference, optimal location refers to the node closest to the hash of the key to the data by XOR
+All RPC methods return valued by modifying the contents of a pointer passed as a argument. It is a little unconventional,
+but it is a characteristic of Go's rpc package.
+All RPC methods are also locked by a system of locks prioritizing internal state of the node before external requests are considered
+RPC method intended to be available to external actors are also locked by a semaphor that limits the number of concurrent accesses to a set number
+This is not to maintain threadsafety, but rather to limit the number of concurrent threads to a sensible number
+*/
+
 //Local implements an RPCNode
 type Local struct {
 	Node
@@ -23,8 +31,8 @@ type Local struct {
 	sem          *util.Semaphore
 }
 
-//NewLocal makes new local node
-func NewLocal(port int, dims int, maxrequests int, seednode *Node) (*Local, error) {
+//NewLocal makes new local node at a specified port in a dht of dim dimensions. Dim is overridden by the seednode if seenode is defined
+func NewLocal(port int, dims uint, maxrequests int, seednode *Node) (*Local, error) {
 	var id uint64
 
 	ip := getip()
@@ -45,12 +53,13 @@ func NewLocal(port int, dims int, maxrequests int, seednode *Node) (*Local, erro
 	local.startRPC()
 
 	if seednode != nil {
-		neighbor, err := NewNeighbor(seednode)
-
+		neighbor, err := NewNeighbor(fmt.Sprintf("%v:%v", seednode.IP, seednode.Port))
+		dims, err = neighbor.GetDims()
 		id, err = neighbor.AssistBootstrap(fmt.Sprintf("%v:%v", ip, port))
 		if err != nil {
 			return nil, err
 		}
+		local.neighbors = make([]RPCNodeProxy, dims)
 		local.Node.ID = id
 		local.mutex.RIntLock()
 		local.updateNeighbors(neighbor)
@@ -231,6 +240,8 @@ func (local *Local) Get(key *string, data *[]byte) error {
 	return err
 }
 
+//Relocate moves data/key to the optimal location
+//
 func (local *Local) Relocate(item *common.Item, _ *struct{}) error {
 	local.mutex.RIntLock()
 	defer local.mutex.RIntUnlock()
@@ -252,6 +263,7 @@ func (local *Local) Relocate(item *common.Item, _ *struct{}) error {
 }
 
 //Set a value in dht
+//RPC Method
 func (local *Local) Set(item *common.Item, _ *struct{}) error {
 	local.mutex.RExtLock()
 	local.sem.Lock()
@@ -298,15 +310,21 @@ func (local *Local) Del(key *string, _ *struct{}) error {
 	return closest.Del(*key)
 }
 
+//Pong returns a ping from a remote node
+//RPC Method
 func (local *Local) Pong(*struct{}, *struct{}) error {
 	return nil
 }
 
+//Info returns the local node attributes
+//RPC Method
 func (local *Local) Info(_ *struct{}, node *Node) error {
 	*node = local.Node
 	return nil
 }
 
+//GetNeighbors returns the neighbors of the local node
+//RPC Method
 func (local *Local) GetNeighbors(_ *struct{}, neighbors *[]RPCNodeProxy) error {
 	local.mutex.RExtLock()
 	fmt.Println("GetNeighbors")
@@ -330,25 +348,35 @@ func (local *Local) GetNeighbors(_ *struct{}, neighbors *[]RPCNodeProxy) error {
 	return nil
 }
 
+//AssistBootstrap attempts to assign the next id to a node
+//RPC Method
 func (local *Local) AssistBootstrap(addr *string, id *uint64) error {
 	next := nextNeighbor(local.Node.ID) - 1
 	optimalID := uint64(local.Node.ID ^ (1 << (next)))
+
+	//If the slot for a neighbor differing by the {next} bit is empty or occupied by a sub-optimal neighbor
 	if local.neighbors[next] == nil || local.neighbors[next].ID() != optimalID {
 
 		local.mutex.RIntLock()
 		defer local.mutex.RIntUnlock()
 
+		//Assign the optimal id so that it is returned to the sender
 		*id = optimalID
 		ip, port, err := net.SplitHostPort(*addr)
 		portNum, err := strconv.Atoi(port)
+
+		//Initialize the new neighbor
 		newNeighbor, err := NewNeighbor(&Node{
 			IP:   ip,
 			Port: portNum,
 			ID:   *id,
 		})
+		//Make sure everything worked, otherwise convey failure
 		if err != nil {
 			return err
 		}
+
+		//Save old contents, place new neighbor, and update neighbors
 		oldNeighbor := local.neighbors[next]
 		local.neighbors[next] = newNeighbor
 		if oldNeighbor != nil {
@@ -364,6 +392,8 @@ func (local *Local) AssistBootstrap(addr *string, id *uint64) error {
 	return err
 }
 
+//FindNeighbor attempts to find the most optimal neighhbor available
+//RPCMethod
 func (local *Local) FindNeighbor(info *FindMsg, neighborNode *Node) (err error) {
 	local.sem.Lock()
 	defer local.sem.Unlock()
