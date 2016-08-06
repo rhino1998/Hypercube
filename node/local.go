@@ -5,7 +5,6 @@ import (
 	"log"
 	"net"
 	"net/rpc"
-	"strconv"
 	"sync"
 
 	"github.com/rhino1998/hypercube/common"
@@ -32,7 +31,7 @@ type Local struct {
 }
 
 //NewLocal makes new local node at a specified port in a dht of dim dimensions. Dim is overridden by the seednode if seenode is defined
-func NewLocal(port int, dims uint, maxrequests int, seednode *Node) (*Local, error) {
+func NewLocal(port int, dims uint, maxrequests int, seedaddr string) (*Local, error) {
 	var id uint64
 
 	ip := getip()
@@ -52,9 +51,14 @@ func NewLocal(port int, dims uint, maxrequests int, seednode *Node) (*Local, err
 	}
 	local.startRPC()
 
-	if seednode != nil {
-		neighbor, err := NewNeighbor(fmt.Sprintf("%v:%v", seednode.IP, seednode.Port))
+	if seedaddr != "" {
+		neighbor, err := NewNeighbor(seedaddr)
+
+		//Get the number of dimensions
 		dims, err = neighbor.GetDims()
+		if err != nil {
+			return nil, err
+		}
 		id, err = neighbor.AssistBootstrap(fmt.Sprintf("%v:%v", ip, port))
 		if err != nil {
 			return nil, err
@@ -127,7 +131,7 @@ func (local *Local) getNeighbors(neighbor RPCNodeProxy) {
 	defer local.mutex.RIntUnlock()
 	for i := 0; i < len(local.neighbors); i++ {
 		newNeighborNode, err := neighbor.FindNeighbor(&local.Node, local.Node.ID^(1<<uint(i)))
-		newNeighbor, err := NewNeighbor(&newNeighborNode)
+		newNeighbor, err := NewNeighbor(fmt.Sprintf("%v:%v", newNeighborNode.IP, newNeighborNode.Port))
 		if err == nil {
 			local.updateNeighbors(newNeighbor)
 		}
@@ -204,6 +208,13 @@ func (local *Local) findID(id uint64) (RPCNodeProxy, error) {
 //Local Method
 func (local *Local) closestToKey(key string) (RPCNodeProxy, error) {
 	return local.findID(keyToID(key, len(local.neighbors)))
+}
+
+//GetDims returns the number of dimensions in the dht
+//RPC Method
+func (local *Local) GetDims(_ *struct{}, dims *uint) error {
+	*dims = uint(len(local.neighbors))
+	return nil
 }
 
 //Get value from key
@@ -362,15 +373,9 @@ func (local *Local) AssistBootstrap(addr *string, id *uint64) error {
 
 		//Assign the optimal id so that it is returned to the sender
 		*id = optimalID
-		ip, port, err := net.SplitHostPort(*addr)
-		portNum, err := strconv.Atoi(port)
 
 		//Initialize the new neighbor
-		newNeighbor, err := NewNeighbor(&Node{
-			IP:   ip,
-			Port: portNum,
-			ID:   *id,
-		})
+		newNeighbor, err := NewNeighbor(*addr)
 		//Make sure everything worked, otherwise convey failure
 		if err != nil {
 			return err
@@ -405,7 +410,7 @@ func (local *Local) FindNeighbor(info *FindMsg, neighborNode *Node) (err error) 
 	if neighbor == nil {
 		local.mutex.RIntLock()
 		defer local.mutex.RIntUnlock()
-		newNeighbor, err := NewNeighbor(info.Node)
+		newNeighbor, err := NewNeighbor(fmt.Sprintf("%v:%v", info.Node.IP, info.Node.Port))
 		if err == nil {
 			local.updateNeighbors(newNeighbor)
 		}

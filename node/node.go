@@ -10,6 +10,7 @@ type RPCNode interface {
 	Del(*string, *struct{}) error
 	AssistBootstrap(*string, *uint64) error
 	FindNeighbor(*FindMsg, *Node) error
+	GetDims(*struct{}, *uint) error
 	GetNeighbors(*struct{}, *[]RPCNodeProxy) error
 	Pong(*struct{}, *struct{}) error
 	Info(*struct{}, *Node) error
@@ -19,16 +20,16 @@ type RPCNode interface {
 type RPCNodeProxy interface {
 	Get(string) ([]byte, error)
 	Set(string, []byte) error
-	relocate(string, []byte) error
+	Relocate(string, []byte) error
 	Del(string) error
 	Ping() error
-	GetDims() uint, error
+	GetDims() (uint, error)
 	ID() uint64
 	IP() string
 	Port() int
 	Info() Node
 	FindNeighbor(*Node, uint64) (Node, error)
-	assistBootstrap(string) (uint64, error)
+	AssistBootstrap(string) (uint64, error)
 	GetNeighbors() ([]RPCNodeProxy, error)
 	Connect() error
 	Close() error

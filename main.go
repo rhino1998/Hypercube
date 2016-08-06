@@ -8,15 +8,12 @@ import (
 )
 
 func main() {
-	node.NewLocal(4999, 6, 8, nil)
+	node.NewLocal(4999, 6, 8, "")
 	fmt.Println(4999)
-	seed := &node.Node{
-		ID:   0,
-		Port: 4999,
-		IP:   "localhost",
-	}
+	seed := "localhost:4999"
 	for i := 0; i < 22; i++ {
-		v, _ := node.NewLocal(i+5000, 6, 8, seed)
+		v, err := node.NewLocal(i+5000, 6, 8, seed)
+		fmt.Println(err)
 		fmt.Println(v.Node.ID)
 	}
 	q, err := node.NewNeighbor(seed)

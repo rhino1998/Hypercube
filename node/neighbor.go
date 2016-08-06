@@ -33,7 +33,7 @@ func NewNeighbor(addr string) (*Neighbor, error) {
 	proxy := rpc.NewClient(conn)
 
 	var node Node
-	err = proxy.Call("RPCNode.Info", struct{}{}, &node)
+	err = proxy.Call("RPCNode.Info", &struct{}{}, &node)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +56,10 @@ func (remote *Neighbor) Connect() error {
 	return nil
 }
 
+//GetDims the number of dimensions of the dht according to the node questioned
+//RPC Method
 func (remote *Neighbor) GetDims() (dims uint, err error) {
-	err = remote.proxy.Call("RPCNode.Get", struct{}{}, &dims)
+	err = remote.proxy.Call("RPCNode.GetDims", &struct{}{}, &dims)
 	return dims, err
 }
 
@@ -107,7 +109,7 @@ func (remote *Neighbor) Set(key string, data []byte) error {
 //Relocate moves a key to the optimal location
 //RPC Proxy Method
 func (remote *Neighbor) Relocate(key string, data []byte) error {
-	return remote.proxy.Call("RPCNode.Set", &common.Item{key, data}, nil)
+	return remote.proxy.Call("RPCNode.Relocate", &common.Item{key, data}, nil)
 }
 
 //Del key from remote node
@@ -119,7 +121,7 @@ func (remote *Neighbor) Del(key string) error {
 //GetNeighbors from remote node
 //RPC Proxy Method
 func (remote *Neighbor) GetNeighbors() (neighbors []RPCNodeProxy, err error) {
-	err = remote.proxy.Call("RPCNode.GetNeighbors", struct{}{}, &neighbors)
+	err = remote.proxy.Call("RPCNode.GetNeighbors", &struct{}{}, &neighbors)
 	return neighbors, err
 }
 
