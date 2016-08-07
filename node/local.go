@@ -26,6 +26,7 @@ type Local struct {
 	datalock     *sync.RWMutex
 	neighbors    []RPCNodeProxy
 	neighborlock *sync.RWMutex
+	operational  *sync.RWMutex
 	mutex        *common.IntExtLock
 	sem          *util.Semaphore
 }
@@ -46,12 +47,14 @@ func NewLocal(port int, dims uint, maxrequests int, seedaddr string) (*Local, er
 		datalock:     &sync.RWMutex{},
 		neighbors:    make([]RPCNodeProxy, dims),
 		neighborlock: &sync.RWMutex{},
+		operational:  &sync.RWMutex{},
 		mutex:        common.NewIntExtLock(),
 		sem:          util.NewSemaphore(maxrequests),
 	}
 	local.startRPC()
-
 	if seedaddr != "" {
+		local.operational.Lock()
+		defer local.operational.Unlock()
 		neighbor, err := NewNeighbor(seedaddr)
 
 		//Get the number of dimensions
@@ -59,19 +62,22 @@ func NewLocal(port int, dims uint, maxrequests int, seedaddr string) (*Local, er
 		if err != nil {
 			return nil, err
 		}
+		local.neighbors = make([]RPCNodeProxy, dims)
 		id, err = neighbor.AssistBootstrap(fmt.Sprintf("%v:%v", ip, port))
 		if err != nil {
+			fmt.Println(err)
 			return nil, err
 		}
-		local.neighbors = make([]RPCNodeProxy, dims)
 		local.Node.ID = id
+		//fmt.Println("release", id)
 		local.mutex.RIntLock()
 		local.updateNeighbors(neighbor)
 		local.mutex.RIntUnlock()
-		go local.getNeighbors(neighbor)
+		local.getNeighbors(neighbor)
 		if err != nil {
 			return nil, err
 		}
+
 	}
 	//TBI: id deciding, initial greeting
 	return local, nil
@@ -102,21 +108,25 @@ func (local *Local) startRPC() {
 //Local Method
 func (local *Local) updateStore(neighbor RPCNodeProxy) {
 	local.mutex.RIntLock()
-	defer local.mutex.RIntUnlock()
 	for key := range local.data {
+		local.datalock.Lock()
+		if keyToID(key, len(local.neighbors)) == 110 {
+			fmt.Println(local.ID, "moving", key, "to", neighbor.ID())
+		}
 		if !isCloser(local.Node.ID, neighbor.ID(), keyToID(key, len(local.neighbors))) {
+			local.datalock.Unlock()
 			continue
 		}
-		fmt.Println("store", neighbor.ID(), local.ID)
-		local.datalock.Lock()
 		err := neighbor.Relocate(key, local.data[key])
-		fmt.Println("UPDATED")
 		if err != nil {
+			local.datalock.Unlock()
 			continue
 		}
 		delete(local.data, key)
+		fmt.Println("transfered", key, "to", neighbor.ID())
 		local.datalock.Unlock()
 	}
+	local.mutex.RIntUnlock()
 
 }
 
@@ -131,6 +141,7 @@ func (local *Local) getNeighbors(neighbor RPCNodeProxy) {
 	defer local.mutex.RIntUnlock()
 	for i := 0; i < len(local.neighbors); i++ {
 		newNeighborNode, err := neighbor.FindNeighbor(&local.Node, local.Node.ID^(1<<uint(i)))
+		//fmt.Println(local.Node.ID, "found", newNeighborNode.ID, "while looking for", local.Node.ID^(1<<uint(i)), "for slot", i, newNeighborNode.ID^local.Node.ID^(1<<uint(i)))
 		newNeighbor, err := NewNeighbor(fmt.Sprintf("%v:%v", newNeighborNode.IP, newNeighborNode.Port))
 		if err == nil {
 			local.updateNeighbors(newNeighbor)
@@ -144,19 +155,19 @@ func (local *Local) updateNeighbors(newNeighbor RPCNodeProxy) error {
 	if newNeighbor == nil || (newNeighbor.IP() == local.Node.IP && newNeighbor.Port() == local.Node.Port) {
 		return ErrorNilNeighbor
 	}
+	local.neighborlock.Lock()
 	//fmt.Println(newNeighbor.ID())
 	for i, neighbor := range local.neighbors {
 		if neighbor == nil {
 			err := newNeighbor.Connect()
 			if err != nil {
+				local.neighborlock.Unlock()
 				return err
 			}
-			local.updateStore(newNeighbor)
 
-			local.neighborlock.Lock()
 			local.neighbors[i] = newNeighbor
 			local.neighborlock.Unlock()
-
+			local.updateStore(newNeighbor)
 			return nil
 		}
 		if neighbor.ID() == newNeighbor.ID() {
@@ -164,21 +175,21 @@ func (local *Local) updateNeighbors(newNeighbor RPCNodeProxy) error {
 		}
 		//fmt.Println(neighbor.ID(), newNeighbor.ID(), local.Node.ID^(1<<uint(i)))
 		if isCloser(neighbor.ID(), newNeighbor.ID(), local.Node.ID^(1<<uint(i))) {
-			oldNeighbor := local.neighbors[i]
+			//fmt.Println(newNeighbor.ID(), "replacing", neighbor.ID(), "on", local.Node.ID)
 			err := newNeighbor.Connect()
 			if err != nil {
+				local.neighborlock.Unlock()
 				return err
 			}
-			local.updateStore(newNeighbor)
 
-			local.neighborlock.Lock()
 			local.neighbors[i] = newNeighbor
 			local.neighborlock.Unlock()
-
-			local.updateNeighbors(oldNeighbor)
+			local.updateStore(newNeighbor)
+			local.updateNeighbors(neighbor)
 			return nil
 		}
 	}
+	local.neighborlock.Unlock()
 	//fmt.Println("closing", newNeighbor.ID(), newNeighbor.Port(), local.Node.Port)
 	newNeighbor.Close()
 	return nil
@@ -191,16 +202,20 @@ func (local *Local) findID(id uint64) (RPCNodeProxy, error) {
 	closestID := local.Node.ID
 	for _, neighbor := range local.neighbors {
 		if neighbor == nil {
+			//fmt.Println("nilf")
 			continue
 		}
+		//fmt.Println(closestID, neighbor.ID(), id, closestID^id, neighbor.ID()^id, i)
 		if isCloser(closestID, neighbor.ID(), id) {
 			closest = neighbor
 			closestID = neighbor.ID()
 		}
 	}
-	if closest != nil && closest.ID() == local.Node.ID {
+	if closest == nil || closest.ID() == local.Node.ID {
+		//fmt.Println("cant find")
 		return nil, nil
 	}
+	fmt.Println(closest.ID())
 	return closest, nil
 }
 
@@ -213,6 +228,8 @@ func (local *Local) closestToKey(key string) (RPCNodeProxy, error) {
 //GetDims returns the number of dimensions in the dht
 //RPC Method
 func (local *Local) GetDims(_ *struct{}, dims *uint) error {
+	local.operational.RLock()
+	defer local.operational.RUnlock()
 	*dims = uint(len(local.neighbors))
 	return nil
 }
@@ -220,6 +237,8 @@ func (local *Local) GetDims(_ *struct{}, dims *uint) error {
 //Get value from key
 //RPC Method
 func (local *Local) Get(key *string, data *[]byte) error {
+	local.operational.RLock()
+	defer local.operational.RUnlock()
 
 	local.mutex.RExtLock()
 	local.sem.Lock()
@@ -231,19 +250,20 @@ func (local *Local) Get(key *string, data *[]byte) error {
 	if err != nil {
 		return err
 	}
-
-	if closest == nil {
-		local.datalock.RLock()
-		val, found := local.data[*key]
-		local.datalock.RUnlock()
-		if !found {
-			return NewKeyNotFound(*key, local.Node.ID)
-		}
+	local.datalock.RLock()
+	val, found := local.data[*key]
+	local.datalock.RUnlock()
+	if found {
+		//fmt.Println(keyToID(*key, len(local.neighbors)), local.ID)
 		*data = val
-		//fmt.Println(*data)
-		fmt.Println(local.Node.ID, keyToID(*key, len(local.neighbors)))
 		return nil
 	}
+	if !found && closest == nil {
+		return NewKeyNotFound(*key, local.Node.ID)
+	}
+
+	//fmt.Println(*data)
+	//fmt.Println(local.Node.ID, keyToID(*key, len(local.neighbors)))
 
 	local.sem.Lock()
 	defer local.sem.Unlock()
@@ -254,8 +274,11 @@ func (local *Local) Get(key *string, data *[]byte) error {
 //Relocate moves data/key to the optimal location
 //
 func (local *Local) Relocate(item *common.Item, _ *struct{}) error {
+
 	local.mutex.RIntLock()
 	defer local.mutex.RIntUnlock()
+	local.sem.Lock()
+	defer local.sem.Unlock()
 	closest, err := local.closestToKey(item.Key)
 
 	if err != nil {
@@ -269,13 +292,15 @@ func (local *Local) Relocate(item *common.Item, _ *struct{}) error {
 		local.datalock.Unlock()
 		return nil
 	}
-
-	return closest.Set(item.Key, item.Data)
+	return closest.Relocate(item.Key, item.Data)
 }
 
 //Set a value in dht
 //RPC Method
 func (local *Local) Set(item *common.Item, _ *struct{}) error {
+	local.operational.RLock()
+	defer local.operational.RUnlock()
+
 	local.mutex.RExtLock()
 	local.sem.Lock()
 	defer local.sem.Unlock()
@@ -297,7 +322,11 @@ func (local *Local) Set(item *common.Item, _ *struct{}) error {
 	return closest.Set(item.Key, item.Data)
 }
 
+//Del deletes a key/data from the dht
+//RPC Method
 func (local *Local) Del(key *string, _ *struct{}) error {
+	local.operational.RLock()
+	defer local.operational.RUnlock()
 
 	local.mutex.RExtLock()
 	local.sem.Lock()
@@ -337,8 +366,10 @@ func (local *Local) Info(_ *struct{}, node *Node) error {
 //GetNeighbors returns the neighbors of the local node
 //RPC Method
 func (local *Local) GetNeighbors(_ *struct{}, neighbors *[]RPCNodeProxy) error {
+	local.operational.RLock()
+	defer local.operational.RUnlock()
 	local.mutex.RExtLock()
-	fmt.Println("GetNeighbors")
+	//fmt.Println("GetNeighbors")
 	local.sem.Lock()
 	defer local.sem.Unlock()
 	defer local.mutex.RExtUnlock()
@@ -362,62 +393,78 @@ func (local *Local) GetNeighbors(_ *struct{}, neighbors *[]RPCNodeProxy) error {
 //AssistBootstrap attempts to assign the next id to a node
 //RPC Method
 func (local *Local) AssistBootstrap(addr *string, id *uint64) error {
+
+	//Lock for safety
+	local.operational.RLock()
+	local.operational.RUnlock()
+	local.mutex.RIntLock()
+	defer local.mutex.RIntUnlock()
+
 	next := nextNeighbor(local.Node.ID) - 1
 	optimalID := uint64(local.Node.ID ^ (1 << (next)))
 
+	local.neighborlock.Lock()
 	//If the slot for a neighbor differing by the {next} bit is empty or occupied by a sub-optimal neighbor
 	if local.neighbors[next] == nil || local.neighbors[next].ID() != optimalID {
-
-		local.mutex.RIntLock()
-		defer local.mutex.RIntUnlock()
-
 		//Assign the optimal id so that it is returned to the sender
 		*id = optimalID
 
 		//Initialize the new neighbor
-		newNeighbor, err := NewNeighbor(*addr)
+		newNeighbor, err := makeNeighbor(*addr, optimalID)
 		//Make sure everything worked, otherwise convey failure
 		if err != nil {
+			local.neighborlock.Unlock()
 			return err
 		}
 
 		//Save old contents, place new neighbor, and update neighbors
 		oldNeighbor := local.neighbors[next]
 		local.neighbors[next] = newNeighbor
+
+		local.neighborlock.Unlock()
 		if oldNeighbor != nil {
+			//fmt.Println(newNeighbor.ID(), "check", local.Node.Port, *addr)
 			local.updateNeighbors(oldNeighbor)
 		}
+		//fmt.Println(newNeighbor.ID(), "checked", local.Node.Port)
 		return nil
 	}
-
+	local.neighborlock.Unlock()
 	var err error
-	local.sem.Lock()
+	//local.sem.Lock()
 	*id, err = local.neighbors[next].AssistBootstrap(*addr)
-	local.sem.Unlock()
+	//local.sem.Unlock()
 	return err
 }
 
 //FindNeighbor attempts to find the most optimal neighhbor available
 //RPCMethod
 func (local *Local) FindNeighbor(info *FindMsg, neighborNode *Node) (err error) {
+	local.operational.RLock()
+	defer local.operational.RUnlock()
 	local.sem.Lock()
 	defer local.sem.Unlock()
 
-	neighbor, err := local.findID(info.Target)
-	if err != nil {
-		return err
+	var closest RPCNodeProxy
+	closestID := local.Node.ID
+	for _, neighbor := range local.neighbors {
+		if neighbor == nil || neighbor.ID() == info.ID {
+			continue
+		}
+		//fmt.Println(closestID, neighbor.ID(), info.Target, closestID^info.Target, neighbor.ID()^info.Target, i)
+		if isCloser(closestID, neighbor.ID(), info.Target) {
+			closest = neighbor
+			closestID = neighbor.ID()
+		}
 	}
-	if neighbor == nil {
+
+	if closest == nil {
 		local.mutex.RIntLock()
 		defer local.mutex.RIntUnlock()
-		newNeighbor, err := NewNeighbor(fmt.Sprintf("%v:%v", info.Node.IP, info.Node.Port))
-		if err == nil {
-			local.updateNeighbors(newNeighbor)
-		}
-
+		local.updateNeighbors(&Neighbor{Node: *info.Node})
 		*neighborNode = local.Node
-		return nil
+		return err
 	}
-	*neighborNode, err = neighbor.FindNeighbor(info.Node, info.Target)
+	*neighborNode, err = closest.FindNeighbor(info.Node, info.Target)
 	return err
 }

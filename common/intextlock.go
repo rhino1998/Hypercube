@@ -1,9 +1,6 @@
 package common
 
-import (
-	"fmt"
-	"sync"
-)
+import "sync"
 
 type IntExtLock struct {
 	internal *sync.RWMutex
@@ -30,7 +27,7 @@ func (lock *IntExtLock) RIntUnlock() {
 func (lock *IntExtLock) IntLock() {
 	lock.mod.Lock()
 	lock.external.Lock()
-	lock.internal.RLock()
+	lock.internal.Lock()
 	lock.external.Unlock()
 	lock.mod.Unlock()
 }
@@ -41,9 +38,9 @@ func (lock *IntExtLock) IntUnlock() {
 
 func (lock *IntExtLock) RExtLock() {
 	lock.mod.Lock()
-	fmt.Println("modlock")
+	//fmt.Println("modlock")
 	lock.internal.Lock()
-	fmt.Println("intlock")
+	//fmt.Println("intlock")
 	lock.external.RLock()
 	lock.internal.Unlock()
 	lock.mod.Unlock()

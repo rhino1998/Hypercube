@@ -44,6 +44,27 @@ func NewNeighbor(addr string) (*Neighbor, error) {
 	}, err
 }
 
+func makeNeighbor(addr string, id uint64) (*Neighbor, error) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	proxy := rpc.NewClient(conn)
+
+	var node Node
+	err = proxy.Call("RPCNode.Info", &struct{}{}, &node)
+	if err != nil {
+		return nil, err
+	}
+	remote := &Neighbor{
+		Node:  node,
+		proxy: proxy,
+		alive: true,
+	}
+	remote.Node.ID = id
+	return remote, err
+}
+
 //Connect establishes a connection to the remote node
 //Local Method
 func (remote *Neighbor) Connect() error {
