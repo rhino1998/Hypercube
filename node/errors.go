@@ -5,8 +5,8 @@ import (
 	"fmt"
 )
 
-//ErrorNilNeighbor is an error returned when a neighbor is Nil
-var ErrorNilNeighbor = errors.New("Nil neighbor")
+//ErrorNilPeer is an error returned when a neighbor is Nil
+var ErrorNilPeer = errors.New("Nil neighbor")
 
 //KeyNotFound describes the error with a missing key
 type KeyNotFound struct {

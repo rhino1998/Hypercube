@@ -3,14 +3,14 @@ package node
 import "github.com/spaolacci/murmur3"
 
 //keyToID hashes a key string into a uint64 with n bits
-func keyToID(key string, n int) uint64 {
+func keyToID(key string, n uint) uint64 {
 	//SomeHash
 	return murmur3.Sum64([]byte(key)) >> (uint(64 - n))
 }
 
 //isCloser determines whether or not an id is closer than another id to the target id
 func isCloser(local, remote, keyid uint64) bool {
-	return local^keyid > remote^keyid
+	return (local ^ keyid) > (remote ^ keyid)
 }
 
 //getip is a placeholder for ip initialization
@@ -50,9 +50,9 @@ func trail0(n uint64) uint {
 	return r
 }
 
-//nextNeighbor returns the next neighbor according to the sequence
+//nextPeer returns the next neighbor according to the sequence
 //0, 1, 3, 2, 6, 7, 5, 4, 12, 13, 15, 14, 10, 8, ...
-func nextNeighbor(id uint64) uint {
+func nextPeer(id uint64) uint {
 	if id == 0 {
 		return 1
 	}

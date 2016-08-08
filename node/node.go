@@ -9,9 +9,9 @@ type RPCNode interface {
 	Relocate(*common.Item, *struct{}) error
 	Del(*string, *struct{}) error
 	AssistBootstrap(*string, *uint64) error
-	FindNeighbor(*FindMsg, *Node) error
+	FindPeer(*FindMsg, *Node) error
 	GetDims(*struct{}, *uint) error
-	GetNeighbors(*struct{}, *[]RPCNodeProxy) error
+	GetPeers(*struct{}, *[]RPCNodeProxy) error
 	Pong(*struct{}, *struct{}) error
 	Info(*struct{}, *Node) error
 }
@@ -28,9 +28,9 @@ type RPCNodeProxy interface {
 	IP() string
 	Port() int
 	Info() Node
-	FindNeighbor(*Node, uint64) (Node, error)
+	FindPeer(*Node, uint64) (Node, error)
 	AssistBootstrap(string) (uint64, error)
-	GetNeighbors() ([]RPCNodeProxy, error)
+	GetPeers() ([]RPCNodeProxy, error)
 	Connect() error
 	Close() error
 }
